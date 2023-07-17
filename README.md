@@ -5,7 +5,7 @@ Instruction tracer powered by Frida.
 ## Example
 
 ```js
-import { TraceBuffer, TraceSession } from "@frida/itrace";
+import { TraceBuffer, TraceSession } from "frida-itrace";
 
 const buffer = new TraceBuffer();
 

@@ -1,5 +1,5 @@
 {
-  "name": "@frida/itrace",
+  "name": "frida-itrace",
   "description": "Instruction tracer powered by Frida",
   "version": "1.0.0",
   "main": "./dist/index.js",
@@ -17,9 +17,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/frida/frida-itrace.git"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "authors": [
     "Frida Developers"
