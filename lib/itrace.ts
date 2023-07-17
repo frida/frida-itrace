@@ -1,7 +1,5 @@
 import EventEmitter from "events";
-import _TypedEmitter, { EventMap } from "typed-emitter";
-
-type TypedEmitter<T extends EventMap> = _TypedEmitter.default<T>;
+import type { TypedEmitter } from "tiny-typed-emitter";
 
 const POINTER_SIZE = Process.pointerSize;
 
@@ -104,7 +102,7 @@ export class TraceSession {
     };
 }
 
-export type TraceSessionEvents = {
+export interface TraceSessionEvents {
     start: (regSpecs: RegisterSpec[], regValues: ArrayBuffer) => void,
     end: () => void,
     compile: (block: BlockSpec) => void,
@@ -242,7 +240,7 @@ export interface TraceBufferConfig {
 }
 
 function makeCModuleSource(): string {
-    return `#line 246 "itrace.ts"
+    return `#line 244 "itrace.ts"
 #include <string.h>
 #include <gum/gummodulemap.h>
 #include <gum/gumstalker.h>
