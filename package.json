@@ -1,0 +1,36 @@
+{
+  "name": "@frida/itrace",
+  "description": "Instruction tracer powered by Frida",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "files": [
+    "/dist/"
+  ],
+  "scripts": {
+    "prepare": "npm run build",
+    "build": "tsc",
+    "watch": "tsc -w"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/frida/frida-itrace.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "authors": [
+    "Frida Developers"
+  ],
+  "keywords": [
+    "frida"
+  ],
+  "devDependencies": {
+    "@types/frida-gum": "^18.4.0",
+    "@types/node": "^20.4.2",
+    "typed-emitter": "^2.1.0",
+    "typescript": "^5.1.6"
+  }
+}
