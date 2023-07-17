@@ -1,7 +1,7 @@
 {
   "name": "frida-itrace",
   "description": "Instruction tracer powered by Frida",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "main": "./dist/itrace.js",
   "types": "./dist/itrace.d.ts",
   "type": "module",
