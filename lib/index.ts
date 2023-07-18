@@ -206,7 +206,7 @@ export class TraceBuffer {
         public regionSize: number) {
     }
 
-    static alloc(config: TraceBufferConfig = {}): TraceBuffer {
+    static create(config: TraceBufferConfig = {}): TraceBuffer {
         const stateSize = 4 * POINTER_SIZE;
         const capacity = config.capacity ?? 32 * 1024 * 1024;
         const regionSize = roundUpToPageSize(stateSize + capacity);

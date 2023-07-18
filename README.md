@@ -17,7 +17,7 @@ const strategy: TraceStrategy = {
     threadId: Process.enumerateThreads()[0].id
 };
 
-const buffer = TraceBuffer.alloc();
+const buffer = TraceBuffer.create();
 
 const session = new TraceSession(strategy, buffer);
 session.events.on("start", (regSpecs, regValues) => {
