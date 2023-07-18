@@ -8,7 +8,13 @@ const POINTER_SIZE = Process.pointerSize;
 const BUFFER_OFFSET_LOST = 2 * POINTER_SIZE;
 const BUFFER_OFFSET_CAPACITY = 3 * POINTER_SIZE;
 
+const KERN_SUCCESS = 0;
+const VM_FLAGS_ANYWHERE = 1;
+const VM_INHERIT_NONE = 2;
+
 const _bufferRead = makeBufferReadImpl();
+
+const getDarwinApi = memoize(_getDarwinApi);
 
 export type TraceStrategy = TraceThreadStrategy | TraceRangeStrategy;
 
@@ -216,6 +222,45 @@ export class TraceBuffer {
 
         return new TraceBuffer(nativeBuffer, regionSize);
     }
+
+    static open(location: string): TraceBuffer {
+        if (Process.platform !== "darwin") {
+            throw new Error("shared memory is only supported on Darwin for now");
+        }
+
+        const { pid, regionBase, regionSize } = JSON.parse(location);
+
+        const api = getDarwinApi();
+        const self = api.mach_task_self();
+
+        const taskBuf = Memory.alloc(4);
+        checkKernResult("task_for_pid", api.task_for_pid(self, pid, taskBuf));
+
+        const task = taskBuf.readU32();
+        try {
+            const targetAddress = Memory.alloc(8 + 4 + 4);
+            const curProtection = targetAddress.add(8);
+            const maxProtection = curProtection.add(4);
+            checkKernResult("mach_vm_remap",
+                api.mach_vm_remap(
+                    self,
+                    targetAddress,
+                    regionSize,
+                    0,
+                    VM_FLAGS_ANYWHERE,
+                    task,
+                    uint64(regionBase),
+                    0,
+                    curProtection,
+                    maxProtection,
+                    VM_INHERIT_NONE));
+            const localRegionBase = ptr(targetAddress.readU64().toString());
+
+            return new TraceBuffer(localRegionBase, regionSize);
+        } finally {
+            api.mach_port_deallocate(self, task);
+        }
+    }
 }
 
 export interface TraceBufferConfig {
@@ -342,3 +387,106 @@ function roundUpToPageSize(size: number) {
         ? size
         : size + (pageSize - offset);
 }
+
+interface DarwinApi {
+    mach_task_self(): number;
+    mach_port_deallocate(targetTask: number, name: number): number;
+    task_for_pid(targetTask: number, pid: number, taskBuf: NativePointerValue): number;
+    mach_vm_remap(
+        targetTask: number,
+        targetAddress: NativePointerValue,
+        size: number | UInt64,
+        mask: number | UInt64,
+        flags: number,
+        sourceTask: number,
+        sourceAddress: number | UInt64,
+        copy: number,
+        curProtection: NativePointerValue,
+        maxProtection: NativePointerValue,
+        inheritance: number,
+    ): number;
+}
+
+function _getDarwinApi(): DarwinApi {
+    const NF = NativeFunction;
+
+    return makeApi<DarwinApi>([
+        ["mach_task_self", () => {
+            const port = Module.getExportByName(null, "mach_task_self_").readU32();
+            return () => port;
+        }],
+        ["mach_port_deallocate", NF, "int", ["uint", "uint"]],
+        ["task_for_pid", NF, "int", ["uint", "int", "pointer"]],
+        ["mach_vm_remap", NF, "int", ["uint", "pointer", "size_t", "size_t", "int", "uint", "uint64", "uint", "pointer",
+            "pointer", "uint"]],
+    ]);
+}
+
+function checkKernResult(name: string, kr: number) {
+    if (kr !== KERN_SUCCESS) {
+        throw new Error(`${name}() failed (kr=${kr})`);
+    }
+}
+
+type ApiSpec = ApiSpecEntry[];
+type ApiSpecEntry = ApiFuncEntry | ApiVarEntry;
+type ApiFuncEntry = [
+    name: string,
+    ctor: SystemFunctionConstructor | NativeFunctionConstructor,
+    retType: NativeFunctionReturnType,
+    argTypes: NativeFunctionArgumentType[]
+];
+type ApiVarEntry = [
+    name: string,
+    resolver: () => any,
+];
+
+function makeApi<T>(spec: ApiSpec): T {
+    return spec.reduce((api, entry) => {
+        addApiPlaceholder(api, entry);
+        return api;
+    }, {} as T);
+}
+
+const nativeOpts: NativeFunctionOptions = { exceptions: "propagate" };
+
+function addApiPlaceholder<T>(api: T, entry: ApiSpecEntry): void {
+    const [name] = entry;
+    Object.defineProperty(api, name, {
+        configurable: true,
+        get() {
+            let impl = null;
+
+            if (entry.length === 2) {
+                const [, resolve] = entry;
+                impl = resolve();
+            } else {
+                const [, Ctor, retType, argTypes] = entry;
+
+                const address = Module.findExportByName(null, name);
+                if (address !== null)
+                    impl = new Ctor(address, retType, argTypes, nativeOpts);
+            }
+
+            Object.defineProperty(api, name, { value: impl });
+
+            return impl;
+        }
+    });
+}
+
+function memoize<T>(compute: Compute<T>): Compute<T> {
+    let value: T;
+    let computed = false;
+
+    return function (...args) {
+        if (!computed) {
+            value = compute(...args);
+            computed = true;
+        }
+
+        return value;
+    };
+}
+
+type Compute<T> = (...args: any[]) => T;
