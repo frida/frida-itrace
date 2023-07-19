@@ -256,7 +256,9 @@ export class TraceBuffer {
                     VM_INHERIT_NONE));
             const localRegionBase = ptr(targetAddress.readU64().toString());
 
-            return new TraceBuffer(localRegionBase, regionSize);
+            const buffer = new TraceBuffer(localRegionBase, regionSize);
+            Script.bindWeak(buffer, deallocateDarwinRegion.bind(null, localRegionBase, regionSize));
+            return buffer;
         } finally {
             api.mach_port_deallocate(self, task);
         }
@@ -405,6 +407,7 @@ interface DarwinApi {
         maxProtection: NativePointerValue,
         inheritance: number,
     ): number;
+    mach_vm_deallocate(targetTask: number, address: number | UInt64, size: number | UInt64): number;
 }
 
 function _getDarwinApi(): DarwinApi {
@@ -419,7 +422,13 @@ function _getDarwinApi(): DarwinApi {
         ["task_for_pid", NF, "int", ["uint", "int", "pointer"]],
         ["mach_vm_remap", NF, "int", ["uint", "pointer", "size_t", "size_t", "int", "uint", "uint64", "uint", "pointer",
             "pointer", "uint"]],
+        ["mach_vm_deallocate", NF, "int", ["uint", "uint64", "uint64"]],
     ]);
+}
+
+function deallocateDarwinRegion(base: NativePointer, size: number) {
+    const api = getDarwinApi();
+    api.mach_vm_deallocate(api.mach_task_self(), uint64(base.toString()), size);
 }
 
 function checkKernResult(name: string, kr: number) {
