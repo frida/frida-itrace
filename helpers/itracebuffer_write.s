@@ -77,7 +77,7 @@ _itrace_buffer_write:
   ldr x0, [x27, 0x80]
   msr nzcv, x0
 
-  ldp x29, x30, [x27, 0x70]    ; itracebuffer.c:63 }
+  ldp x29, x30, [x27, 0x70]   ; itracebuffer.c:63 }
   ldp x1, x0, [x27, 0x60]
   ldp x8, x2, [x27, 0x50]
   ldp x10, x9, [x27, 0x40]

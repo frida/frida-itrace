@@ -602,13 +602,14 @@ emit_buffer_write_impl (GumArm64Writer * cw)
 
     0xd65f03c0U, /* ret                         */
 
-    /* itrace_memcpy: */
+    /* itrace_memcpy:                           */
     0xd343fc48U, /* lsr x8, x2, 3               */
     0xb40000a8U, /* cbz x8, beach2              */
     0xf8408429U, /* ldr x9, [x1], 8             */
     0xf8008409U, /* str x9, [x0], 8             */
     0xd1000508U, /* sub x8, x8, 1               */
     0xb5ffffa8U, /* cbnz x8, again              */
+    /* beach2:                                  */
     0xd65f03c0U, /* ret                         */
   };
 
