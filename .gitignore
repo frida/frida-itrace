@@ -1,2 +1,3 @@
 /dist/
+/helpers/*.dylib*
 /node_modules/
