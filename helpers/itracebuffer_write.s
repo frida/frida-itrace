@@ -2,7 +2,7 @@
 .align 2
 
 _itrace_buffer_write:
-  add x27, x28, 0x228          ; session->stack_top + sizeof (session->stack_top)
+  add x27, x28, 0x228          ; offsetof (session->stack) + sizeof (session->stack)
 
   stp x24, x23, [x27, -0x90]!  ; itracebuffer.c:32 {
   stp x22, x21, [x27, 0x10]

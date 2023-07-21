@@ -516,7 +516,7 @@ static void
 emit_buffer_write_impl (GumArm64Writer * cw)
 {
   static const guint32 write_impl[] = {
-    0x9108639bU, /* add x27, x28, 0x218         */
+    0x9108a39bU, /* add x27, x28, 0x228         */
 
     0xa9b75f78U, /* stp x24, x23, [x27, -0x90]! */
     0xa9015776U, /* stp x22, x21, [x27, 0x10]   */
