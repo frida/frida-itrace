@@ -538,7 +538,7 @@ emit_buffer_write_impl (GumArm64Writer * cw)
 
     0xf9400668U, /* ldr x8, [x19, 8]            */
     0xf9400e69U, /* ldr x9, [x19, 0x18]         */
-    0xf8bfc26aU, /* ldapr x10, [x19]            */
+    0xc8dffe6aU, /* ldar x10, [x19]             */
     0xeb08015fU, /* cmp x10, x8                 */
     0x54000081U, /* b.ne not_empty              */
     0xf9400e6aU, /* ldr x10, [x19, 0x18]        */
@@ -556,10 +556,13 @@ emit_buffer_write_impl (GumArm64Writer * cw)
     0x8b0b014aU, /* add x10, x10, x11           */
     /* check_headroom:                          */
     0xeb14015fU, /* cmp x10, x20                */
-    0x540000a2U, /* b.hs sufficient_headroom    */
+    0x540000e2U, /* b.hs sufficient_headroom    */
     0x91004268U, /* add x8, x19, 0x10           */
-    0x52800029U, /* mov w9, 1                   */
-    0xf8e90108U, /* ldaddal x9, x8, [x8]        */
+    /* retry:                                   */
+    0xc85ffd09U, /* ldaxr x9, [x8]              */
+    0x91000529U, /* add x9, x9, 1               */
+    0xc80afd09U, /* stlxr w10, x9, [x8]         */
+    0x35ffffaaU, /* cbnz w10, retry             */
     0x14000018U, /* b beach                     */
     /* sufficient_headroom:                     */
     0x8b14010aU, /* add x10, x8, x20            */

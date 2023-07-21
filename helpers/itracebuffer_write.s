@@ -24,7 +24,7 @@ _itrace_buffer_write:
 
   ldr x8, [x19, 8]            ; itracebuffer.c:33   const size_t current_tail = atomic_load_explicit (&self->tail, memory_order_relaxed); ; 0xda ; arg1
   ldr x9, [x19, 0x18]         ; itracebuffer.c:102   return (cursor + amount) % self->capacity; ; 0xda ; arg1
-  ldapr x10, [x19]            ; itracebuffer.c:36   const size_t current_head = atomic_load_explicit (&self->head, memory_order_acquire);
+  ldar x10, [x19]             ; itracebuffer.c:36   const size_t current_head = atomic_load_explicit (&self->head, memory_order_acquire);
   cmp x10, x8                 ; itracebuffer.c:39   if (current_tail == current_head)
   b.ne .Lnot_empty
   ldr x10, [x19, 0x18]        ; itracebuffer.c:40     headroom = self->capacity - 1; ; 0xed
@@ -44,8 +44,11 @@ _itrace_buffer_write:
   cmp x10, x20                ; itracebuffer.c:45   if (headroom < size)
   b.hs .Lsufficient_headroom
   add x8, x19, 0x10           ; itracebuffer.c:47     self->lost++;
-  mov w9, 1                   ; itracebuffer.c:0
-  ldaddal x9, x8, [x8]        ; itracebuffer.c:47     self->lost++;
+.Lretry:
+  ldaxr x9, [x8]
+  add x9, x9, 1
+  stlxr w10, x9, [x8]
+  cbnz w10, .Lretry
   b .Lbeach
 .Lsufficient_headroom:
   add x10, x8, x20            ; itracebuffer.c:0

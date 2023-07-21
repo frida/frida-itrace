@@ -9,7 +9,7 @@ _itrace_buffer_read:
   add x29, sp, 0x30
   ldr x24, [x0]               ; itracebuffer.c:70   const size_t current_head = atomic_load_explicit (&self->head, memory_order_relaxed); ; 0xda ; arg1
   add x8, x0, 8               ; itracebuffer.c:71   const size_t current_tail = atomic_load_explicit (&self->tail, memory_order_acquire); ; arg1
-  ldapr x8, [x8]
+  ldar x8, [x8]
   subs x8, x8, x24            ; itracebuffer.c:73   if (current_tail == current_head)
   b.ne .Lnot_empty
   mov x20, 0                  ; itracebuffer.c:0
