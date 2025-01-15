@@ -295,11 +295,13 @@ transform (GumStalkerIterator * iterator,
   }
   json_builder_end_object (meta);
 
-  const GumModuleDetails * m = gum_module_map_find (session.modules, block_address);
+  GumModule * m = gum_module_map_find (session.modules, block_address);
   if (m != NULL)
   {
+    const GumMemoryRange * range = gum_module_get_range (m);
+
     json_builder_set_member_name (meta, "name");
-    gchar * name = g_strdup_printf ("%s!0x%x", m->name, (guint) (block_address - m->range->base_address));
+    gchar * name = g_strdup_printf ("%s!0x%x", gum_module_get_name (m), (guint) (block_address - range->base_address));
     json_builder_add_string_value (meta, name);
     g_free (name);
 
@@ -307,10 +309,10 @@ transform (GumStalkerIterator * iterator,
     json_builder_begin_object (meta);
 
     json_builder_set_member_name (meta, "path");
-    json_builder_add_string_value (meta, m->path);
+    json_builder_add_string_value (meta, gum_module_get_path (m));
 
     json_builder_set_member_name (meta, "base");
-    add_memory_address (meta, m->range->base_address);
+    add_memory_address (meta, range->base_address);
 
     json_builder_end_object (meta);
   }
