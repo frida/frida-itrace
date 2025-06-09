@@ -3,7 +3,7 @@
   "description": "Instruction tracer powered by Frida",
   "version": "4.0.0",
   "keywords": [
-    "frida"
+    "frida-gum"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
