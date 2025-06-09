@@ -1,9 +1,9 @@
 {
   "name": "frida-itrace",
   "description": "Instruction tracer powered by Frida",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "keywords": [
-    "frida-gum"
+    "frida"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -23,9 +23,6 @@
   },
   "authors": [
     "Frida Developers"
-  ],
-  "keywords": [
-    "frida"
   ],
   "devDependencies": {
     "@types/frida-gum": "^19.0.0",
