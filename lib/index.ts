@@ -374,7 +374,7 @@ function makeBufferReadImpl() {
 
     Memory.patchCode(code, machineCodeTemplate.length, codeBuf => {
         codeBuf.writeByteArray(machineCodeTemplate);
-        codeBuf.add(machineCodeTemplate.length - POINTER_SIZE).writePointer(Module.getExportByName(null, "memcpy"));
+        codeBuf.add(machineCodeTemplate.length - POINTER_SIZE).writePointer(Module.getGlobalExportByName("memcpy"));
     });
 
     const read = new NativeFunction(code, "uint", ["pointer", "pointer", "uint"], { exceptions: "propagate" });
@@ -415,7 +415,7 @@ function _getDarwinApi(): DarwinApi {
 
     return makeApi<DarwinApi>([
         ["mach_task_self", () => {
-            const port = Module.getExportByName(null, "mach_task_self_").readU32();
+            const port = Module.getGlobalExportByName("mach_task_self_").readU32();
             return () => port;
         }],
         ["mach_port_deallocate", NF, "int", ["uint", "uint"]],
@@ -472,7 +472,7 @@ function addApiPlaceholder<T>(api: T, entry: ApiSpecEntry): void {
             } else {
                 const [, Ctor, retType, argTypes] = entry;
 
-                const address = Module.findExportByName(null, name);
+                const address = Module.findGlobalExportByName(name);
                 if (address !== null)
                     impl = new Ctor(address, retType, argTypes, nativeOpts);
             }
