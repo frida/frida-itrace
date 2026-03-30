@@ -374,10 +374,10 @@ function makeBufferReadImpl() {
 
     Memory.patchCode(code, machineCodeTemplate.length, codeBuf => {
         codeBuf.writeByteArray(machineCodeTemplate);
-        codeBuf.add(machineCodeTemplate.length - POINTER_SIZE).writePointer(Module.getGlobalExportByName("memcpy"));
+        codeBuf.add(machineCodeTemplate.length - POINTER_SIZE).writePointer(Module.getGlobalExportByName("memcpy").strip());
     });
 
-    const read = new NativeFunction(code, "uint", ["pointer", "pointer", "uint"], { exceptions: "propagate" });
+    const read = new NativeFunction(code.sign(), "uint", ["pointer", "pointer", "uint"], { exceptions: "propagate" });
     Object.defineProperty(read, "$code", { value: code });
     return read;
 }
