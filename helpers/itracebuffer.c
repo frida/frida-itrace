@@ -84,7 +84,7 @@ itrace_buffer_read (ITraceBuffer * self,
   }
   else
   {
-    const size_t first_chunk_size = self->capacity - current_head;
+    const size_t first_chunk_size = MIN (self->capacity - current_head, n);
     itrace_memcpy (data, self->data + current_head, first_chunk_size);
     itrace_memcpy (data + first_chunk_size, self->data, n - first_chunk_size);
   }

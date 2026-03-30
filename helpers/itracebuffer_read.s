@@ -30,7 +30,9 @@ _itrace_buffer_read:
   add x8, x8, x9
   cmp x8, x2                  ; itracebuffer.c:80   size_t n = MIN (available, size); ; arg3
   csel x20, x8, x2, lo
-  sub x22, x9, x24            ; itracebuffer.c:87     const size_t first_chunk_size = self->capacity - current_head;
+  sub x22, x9, x24            ; itracebuffer.c:87     const size_t first_chunk_size = MIN (self->capacity - current_head, n);
+  cmp x22, x20
+  csel x22, x20, x22, hs
   add x23, x19, 0x20          ; itracebuffer.c:88     itrace_memcpy (data, self->data + current_head, first_chunk_size);
   add x1, x23, x24
   mov x0, x21
