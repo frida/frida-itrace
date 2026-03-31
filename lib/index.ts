@@ -34,6 +34,7 @@ export class TraceSession {
 
     #cm: CModule;
     #threadId: number | undefined;
+    #listener: InvocationListener | undefined;
 
     constructor(public strategy: TraceStrategy, public buffer: TraceBuffer) {
         const nativeSession = Memory.alloc(16384);
@@ -60,11 +61,22 @@ export class TraceSession {
             this.#followThread(strategy.threadId);
         } else {
             const session = this;
-            Interceptor.attach(strategy.start, function () {
+            this.#listener = Interceptor.attach(strategy.start, function () {
                 if (session.#threadId === undefined) {
                     session.#followThread(this.threadId);
                 }
             });
+        }
+    }
+
+    close() {
+        if (this.#threadId !== undefined) {
+            Stalker.unfollow(this.#threadId);
+            this.#threadId = undefined;
+        }
+        if (this.#listener !== undefined) {
+            this.#listener.detach();
+            this.#listener = undefined;
         }
     }
 
@@ -83,7 +95,7 @@ export class TraceSession {
 
     #onEnd = () => {
         setImmediate(() => {
-          Stalker.unfollow(this.#threadId);
+          this.close();
           this.events.emit("end");
         });
     };
