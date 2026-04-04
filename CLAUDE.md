@@ -58,3 +58,13 @@ Key patterns:
   instrumentation.
 - `Script.bindWeak()` for automatic resource cleanup, plus explicit
   `close()`.
+
+## Conventions
+
+- **Newspaper code order**: if function A calls B, then B should be
+  defined after A. The further down a function is, the lower level it
+  is. Entry points (e.g. `init`, `transform`) come first; leaf helpers
+  come last.
+- **CModule uses TinyCC** by default. TCC does not support GCC
+  builtins like `__sync_synchronize` or `__atomic_*`. Use inline
+  assembly or raw instruction encodings for barriers and atomics.
