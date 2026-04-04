@@ -5,6 +5,11 @@ import type { TypedEmitter } from "tiny-typed-emitter";
 
 const POINTER_SIZE = Process.pointerSize;
 
+export const TRACE_EVENT_COMPILE = 1;
+export const TRACE_EVENT_START = 2;
+export const TRACE_EVENT_END = 3;
+export const TRACE_EVENT_PANIC = 4;
+
 const BUFFER_OFFSET_LOST = 2 * POINTER_SIZE;
 const BUFFER_OFFSET_CAPACITY = 3 * POINTER_SIZE;
 
@@ -48,10 +53,7 @@ export class TraceSession {
         this.#cm = new CModule(backend.code, {
             session: nativeSession,
             end_address: endBuf,
-            on_start: new NativeCallback(this.#onStart, "void", ["pointer", "pointer", "uint"]),
             on_end: new NativeCallback(this.#onEnd, "void", []),
-            on_compile: new NativeCallback(this.#onCompile, "void", ["pointer"]),
-            on_panic: new NativeCallback(this.#onPanic, "void", ["pointer"]),
         });
     }
 
@@ -87,46 +89,16 @@ export class TraceSession {
         });
     }
 
-    #onStart = (metaJson: NativePointer, cpuContext: NativePointer, length: number) => {
-        const specs = JSON.parse(metaJson.readUtf8String()!) as RegisterSpec[];
-        const values = cpuContext.readByteArray(length)!;
-        this.events.emit("start", specs, values);
-    };
-
     #onEnd = () => {
         setImmediate(() => {
           this.close();
           this.events.emit("end");
         });
     };
-
-    #onCompile = (metaJson: NativePointer) => {
-        const block = JSON.parse(metaJson.readUtf8String()!);
-
-        block.address = ptr(block.address);
-
-        const compiled = block.compiled;
-        compiled.address = ptr(compiled.address);
-
-        const module = block.module;
-        if (module !== undefined) {
-            module.base = ptr(module.base);
-        }
-
-        this.events.emit("compile", block);
-    };
-
-    #onPanic = (messagePtr: NativePointer) => {
-        const message = messagePtr.readUtf8String()!;
-        this.events.emit("panic", message);
-    };
 }
 
 export interface TraceSessionEvents {
-    start: (regSpecs: RegisterSpec[], regValues: ArrayBuffer) => void,
     end: () => void,
-    compile: (block: BlockSpec) => void,
-    panic: (message: string) => void,
 }
 
 export interface RegisterSpec {
