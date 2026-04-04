@@ -1,7 +1,7 @@
 {
   "name": "frida-itrace",
   "description": "Instruction tracer powered by Frida",
-  "version": "4.1.0",
+  "version": "5.0.0",
   "keywords": [
     "frida-gum"
   ],
