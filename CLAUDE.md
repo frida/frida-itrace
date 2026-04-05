@@ -68,3 +68,10 @@ Key patterns:
 - **CModule uses TinyCC** by default. TCC does not support GCC
   builtins like `__sync_synchronize` or `__atomic_*`. Use inline
   assembly or raw instruction encodings for barriers and atomics.
+- **Minimal comments**: don't add header-style comments that label
+  obvious sections (e.g. `/* Header */`, `/* Payload */`). Prefer
+  well-named variables and clear structure. Only comment when the
+  code cannot communicate something — like explaining a raw
+  instruction encoding. Be mindful that TCC lacks an optimizer, so
+  don't introduce variables solely for readability if it adds
+  runtime cost.
