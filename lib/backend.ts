@@ -338,7 +338,8 @@ transform (GumStalkerIterator * iterator,
       2 +                  /* reserved */
       writes_size +
       name_size +
-      module_path_size;
+      module_path_size +
+      block_size;
   gsize payload_size = (payload_size_raw + 7) & ~(gsize) 7;
 
   guint8 * buf = (guint8 *) session.log_buf;
@@ -376,6 +377,10 @@ transform (GumStalkerIterator * iterator,
     memcpy (p, module_path, module_path_size);
     p += module_path_size;
   }
+
+  /* Machine code snapshot */
+  memcpy (p, (const guint8 *) (gsize) block_address, block_size);
+  p += block_size;
 
   /* Zero-fill alignment padding */
   gsize total = 16 + payload_size;
