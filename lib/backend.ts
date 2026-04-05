@@ -325,7 +325,7 @@ transform (GumStalkerIterator * iterator,
       : 0;
 
   gsize writes_size = writes->len * sizeof (ITraceBlockWrite);
-  gsize payload_size_raw =
+  gsize payload_size =
       8 +                  /* block_address */
       4 +                  /* block_size */
       4 +                  /* record_size */
@@ -340,7 +340,6 @@ transform (GumStalkerIterator * iterator,
       name_size +
       module_path_size +
       block_size;
-  gsize payload_size = (payload_size_raw + 7) & ~(gsize) 7;
 
   guint8 * buf = (guint8 *) session.log_buf;
   guint8 * p = buf;
@@ -382,12 +381,7 @@ transform (GumStalkerIterator * iterator,
   memcpy (p, (const guint8 *) (gsize) block_address, block_size);
   p += block_size;
 
-  /* Zero-fill alignment padding */
-  gsize total = 16 + payload_size;
-  while ((gsize) (p - buf) < total)
-    *p++ = 0;
-
-  itrace_buffer_write (session.buffer, buf, total);
+  itrace_buffer_write (session.buffer, buf, 16 + payload_size);
 
   g_array_free (writes, TRUE);
   g_free (name_buf);
@@ -415,8 +409,7 @@ on_first_block_hit (GumCpuContext * cpu_context,
       G_N_ELEMENTS (cpu_context->v);   /* v0-v31 */
   guint32 context_size = sizeof (GumCpuContext);
 
-  gsize payload_size_raw = 4 + 4 + (num_regs * 8) + context_size;
-  gsize payload_size = (payload_size_raw + 7) & ~(gsize) 7;
+  gsize payload_size = 4 + 4 + (num_regs * 8) + context_size;
 
   guint8 * buf = (guint8 *) session.log_buf;
   guint8 * p = buf;
@@ -458,12 +451,7 @@ on_first_block_hit (GumCpuContext * cpu_context,
   memcpy (p, cpu_context, context_size);
   p += context_size;
 
-  /* Zero-fill alignment padding */
-  gsize total = 16 + payload_size;
-  while ((gsize) (p - buf) < total)
-    *p++ = 0;
-
-  itrace_buffer_write (session.buffer, buf, total);
+  itrace_buffer_write (session.buffer, buf, 16 + payload_size);
 }
 
 static void
@@ -692,16 +680,13 @@ emit_event (guint32 type,
             const guint8 * payload,
             gsize payload_size)
 {
-  gsize padded = (payload_size + 7) & ~(gsize) 7;
-  gsize total = 16 + padded;
-
   guint8 * buf = (guint8 *) session.log_buf;
   guint8 * p = buf;
 
   /* Header */
   memset (p, 0, 8); p += 8;
   memcpy (p, &type, 4); p += 4;
-  guint32 ps = (guint32) padded;
+  guint32 ps = (guint32) payload_size;
   memcpy (p, &ps, 4); p += 4;
 
   /* Payload */
@@ -711,11 +696,7 @@ emit_event (guint32 type,
     p += payload_size;
   }
 
-  /* Zero-fill alignment padding */
-  while ((gsize) (p - buf) < total)
-    *p++ = 0;
-
-  itrace_buffer_write (session.buffer, buf, total);
+  itrace_buffer_write (session.buffer, buf, 16 + payload_size);
 }
 
 static void

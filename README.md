@@ -70,7 +70,7 @@ first 8 bytes. All events share a common 16-byte header:
 ```
 uint64_t sentinel = 0
 uint32_t type
-uint32_t payload_size           (bytes after header, 8-byte aligned)
+uint32_t payload_size           (bytes after header)
 ```
 
 Event types:
@@ -103,7 +103,7 @@ write[num_writes]:
     uint32_t reg_index
 char     name[name_size]
 char     module_path[module_path_size]
-<padding to 8-byte alignment>
+uint8_t  code[block_size]
 ```
 
 #### start (type=2)
@@ -119,7 +119,6 @@ reg_spec[num_regs]:             (8 bytes each)
     char     name[6]            (zero-padded)
     uint8_t  reg_size
 uint8_t  context[context_size]  (raw GumCpuContext)
-<padding to 8-byte alignment>
 ```
 
 #### end (type=3)
