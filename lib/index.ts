@@ -5,13 +5,6 @@ import type { TypedEmitter } from "tiny-typed-emitter";
 
 const POINTER_SIZE = Process.pointerSize;
 
-export enum TraceEventType {
-    Compile = 1,
-    Start = 2,
-    End = 3,
-    Panic = 4,
-}
-
 const BUFFER_OFFSET_LOST = 2 * POINTER_SIZE;
 const BUFFER_OFFSET_CAPACITY = 3 * POINTER_SIZE;
 
@@ -103,88 +96,8 @@ export interface TraceSessionEvents {
     end: () => void,
 }
 
-export interface RegisterSpec {
-    /**
-     * Name of register, e.g. `x0`.
-     */
-    name: string;
-
-    /**
-     * Size of register, e.g. `8`.
-     */
-    size: number;
-}
-
 /**
- * Basic block that was just compiled.
- */
-export interface BlockSpec {
-    /**
-     * Human-readable name.
-     */
-    name: string;
-
-    /**
-     * Memory address where block starts.
-     */
-    address: NativePointer;
-
-    /**
-     * Block size, in bytes.
-     */
-    size: number;
-
-    /**
-     * Where in memory the compiled version of the block resides. This is the
-     * code that actually gets executed.
-     */
-    compiled: {
-        /**
-         * Memory address where compiled block starts.
-         */
-        address: NativePointer;
-
-        /**
-         * Compiled block size, in bytes.
-         */
-        size: number;
-    }
-
-    /**
-     * Module that this block is part of, if any.
-     */
-    module?: {
-        /**
-         * Module path.
-         */
-        path: string;
-
-        /**
-         * Module base address.
-         */
-        base: NativePointer;
-    }
-
-    /**
-     * Register writes performed by the block. This is needed to parse the data
-     * written to the `TraceBuffer`.
-     */
-    writes: BlockWriteSpec[];
-}
-
-export type BlockWriteSpec = [ blockOffset: number, registerIndex: number ];
-
-/**
- * Ringbuffer where data gets written at the end of each basic block executed.
- *
- * Each written record has the following format on arm64:
- * ```
- * uint64_t block_address;
- * uint64_t link_register;
- * RegisterValue reg_writes[n];
- * ```
- * Where `n` depends on the particular block, specified by
- * `BlockSpec#writes`.
+ * Ringbuffer where trace data gets written.
  */
 export class TraceBuffer {
     get location(): string {
