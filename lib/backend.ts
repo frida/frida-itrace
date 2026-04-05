@@ -292,9 +292,6 @@ transform (GumStalkerIterator * iterator,
     prev_session_reg = session_reg;
   }
 
-  /*
-   * Build and emit compile event.
-   */
   guint32 block_size = (insn->address + insn->size) - block_address;
   guint32 compiled_code_size = gum_arm64_writer_offset (cw);
   GumAddress compiled_address = cw->pc - compiled_code_size;
@@ -344,14 +341,12 @@ transform (GumStalkerIterator * iterator,
   guint8 * buf = (guint8 *) session.log_buf;
   guint8 * p = buf;
 
-  /* Event header */
   memset (p, 0, 8); p += 8;
   guint32 event_type = ITRACE_EVENT_COMPILE;
   memcpy (p, &event_type, 4); p += 4;
   guint32 ps = (guint32) payload_size;
   memcpy (p, &ps, 4); p += 4;
 
-  /* Payload fixed fields */
   memcpy (p, &block_address, 8); p += 8;
   memcpy (p, &block_size, 4); p += 4;
   guint32 record_size = log_buf_offset;
@@ -366,10 +361,8 @@ transform (GumStalkerIterator * iterator,
   guint16 reserved = 0;
   memcpy (p, &reserved, 2); p += 2;
 
-  /* Writes array */
   memcpy (p, writes->data, writes_size); p += writes_size;
 
-  /* Variable-length strings */
   memcpy (p, name_buf, name_size); p += name_size;
   if (module_path_size > 0)
   {
@@ -377,7 +370,6 @@ transform (GumStalkerIterator * iterator,
     p += module_path_size;
   }
 
-  /* Machine code snapshot */
   memcpy (p, (const guint8 *) (gsize) block_address, block_size);
   p += block_size;
 
@@ -414,18 +406,15 @@ on_first_block_hit (GumCpuContext * cpu_context,
   guint8 * buf = (guint8 *) session.log_buf;
   guint8 * p = buf;
 
-  /* Event header */
   memset (p, 0, 8); p += 8;
   guint32 event_type = ITRACE_EVENT_START;
   memcpy (p, &event_type, 4); p += 4;
   guint32 ps = (guint32) payload_size;
   memcpy (p, &ps, 4); p += 4;
 
-  /* Payload */
   memcpy (p, &num_regs, 4); p += 4;
   memcpy (p, &context_size, 4); p += 4;
 
-  /* Register specs: 8 bytes each */
   write_reg_spec (&p, "pc", sizeof (cpu_context->pc));
   write_reg_spec (&p, "sp", sizeof (cpu_context->sp));
   write_reg_spec (&p, "nzcv", sizeof (cpu_context->nzcv));
@@ -447,7 +436,6 @@ on_first_block_hit (GumCpuContext * cpu_context,
     write_reg_spec (&p, name, sizeof (cpu_context->v[0]));
   }
 
-  /* Raw CPU context */
   memcpy (p, cpu_context, context_size);
   p += context_size;
 
@@ -683,13 +671,11 @@ emit_event (guint32 type,
   guint8 * buf = (guint8 *) session.log_buf;
   guint8 * p = buf;
 
-  /* Header */
   memset (p, 0, 8); p += 8;
   memcpy (p, &type, 4); p += 4;
   guint32 ps = (guint32) payload_size;
   memcpy (p, &ps, 4); p += 4;
 
-  /* Payload */
   if (payload_size > 0)
   {
     memcpy (p, payload, payload_size);
