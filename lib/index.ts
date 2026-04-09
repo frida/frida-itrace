@@ -210,6 +210,15 @@ export interface TraceBufferReaderConfig {
 }
 
 function makeBufferReadImpl() {
+    if (Process.arch === "arm64") {
+        return makeArm64BufferReadImpl();
+    } else if (Process.arch === "x64") {
+        return makeX64BufferReadImpl();
+    }
+    throw new Error(`Unsupported architecture: ${Process.arch}`);
+}
+
+function makeArm64BufferReadImpl() {
     const machineCodeTemplate = [
         0xf8, 0x5f, 0xbc, 0xa9, /* stp x24, x23, [sp, -0x40]! */
         0xf6, 0x57, 0x01, 0xa9, /* stp x22, x21, [sp, 0x10]   */
@@ -280,6 +289,61 @@ function makeBufferReadImpl() {
 
     const read = new NativeFunction(code.sign(), "uint", ["pointer", "pointer", "uint"], { exceptions: "propagate" });
     Object.defineProperty(read, "$code", { value: code });
+    return read;
+}
+
+function makeX64BufferReadImpl() {
+    const cm = new CModule(`
+#include <string.h>
+
+typedef struct {
+  unsigned long long head;
+  unsigned long long tail;
+  unsigned long long lost;
+  unsigned long long capacity;
+  unsigned char data[];
+} ITraceBuffer;
+
+unsigned int
+buffer_read (ITraceBuffer * self,
+             void * data,
+             unsigned int max_size)
+{
+  unsigned long long head = self->head;
+  unsigned long long tail = *(volatile unsigned long long *) &self->tail;
+
+  if (tail == head)
+    return 0;
+
+  unsigned long long available = (tail > head)
+      ? tail - head
+      : (self->capacity - head) + tail;
+  unsigned long long n = (available < max_size) ? available : max_size;
+
+  if (tail > head)
+  {
+    memcpy (data, self->data + head, (unsigned long long) n);
+  }
+  else
+  {
+    unsigned long long first = self->capacity - head;
+    if (first > n)
+      first = n;
+    memcpy (data, self->data + head, (unsigned long long) first);
+    if (n > first)
+      memcpy ((unsigned char *) data + first, self->data,
+          (unsigned long long) (n - first));
+  }
+
+  unsigned long long new_head = (head + n) % self->capacity;
+  *(volatile unsigned long long *) &self->head = new_head;
+
+  return (unsigned int) n;
+}
+`);
+
+    const read = new NativeFunction(cm.buffer_read, "uint", ["pointer", "pointer", "uint"], { exceptions: "propagate" });
+    Object.defineProperty(read, "$cm", { value: cm });
     return read;
 }
 

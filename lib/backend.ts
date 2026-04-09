@@ -3,10 +3,29 @@ export const code = `#line 2 "backend.ts"
 #include <gum/gummodulemap.h>
 #include <gum/gumstalker.h>
 
-#define RED_ZONE_SIZE 128
+#if defined (HAVE_ARM64)
 
-#define SCRATCH_REG_BOTTOM ARM64_REG_X21
-#define SCRATCH_REG_TOP ARM64_REG_X28
+# define RED_ZONE_SIZE 128
+
+# define SCRATCH_REG_BOTTOM ARM64_REG_X21
+# define SCRATCH_REG_TOP ARM64_REG_X28
+
+/* dmb ish — full barrier, inner shareable domain */
+# define memory_barrier() __asm__ volatile (".int 0xd5033bbf")
+
+#elif defined (HAVE_I386) && GLIB_SIZEOF_VOID_P == 8
+
+# define RED_ZONE_SIZE 128
+
+# define SCRATCH_REG_BOTTOM X86_REG_R12
+# define SCRATCH_REG_TOP X86_REG_R15
+
+/* x86_64 TSO makes a compiler barrier sufficient */
+# define memory_barrier() __asm__ volatile ("")
+
+#else
+# error "Unsupported architecture"
+#endif
 
 #define SCRATCH_REG_INDEX(r) ((r) - SCRATCH_REG_BOTTOM)
 #define SCRATCH_REG_OFFSET(r) (SCRATCH_REG_INDEX (r) * 8)
@@ -15,9 +34,6 @@ export const code = `#line 2 "backend.ts"
 #define ITRACE_EVENT_START   2
 #define ITRACE_EVENT_END     3
 #define ITRACE_EVENT_PANIC   4
-
-/* dmb ish — full barrier, inner shareable domain */
-#define memory_barrier() __asm__ volatile (".int 0xd5033bbf")
 
 typedef enum _ITraceState ITraceState;
 typedef struct _ITraceSession ITraceSession;
@@ -67,10 +83,23 @@ extern void on_end (void);
 
 static void on_first_block_hit (GumCpuContext * cpu_context, gpointer user_data);
 static void on_end_instruction_hit (GumCpuContext * cpu_context, gpointer user_data);
+
+#if defined (HAVE_ARM64)
+
 static arm64_reg pick_scratch_register (cs_regs regs_read, uint8_t num_regs_read, cs_regs regs_written, uint8_t num_regs_written);
 static arm64_reg register_to_full_size_register (arm64_reg reg);
 static void emit_scratch_register_restore (GumArm64Writer * cw, arm64_reg reg);
 static void emit_buffer_write_impl (GumArm64Writer * cw);
+
+#elif defined (HAVE_I386)
+
+static x86_reg pick_scratch_register (cs_regs regs_read, uint8_t num_regs_read, cs_regs regs_written, uint8_t num_regs_written);
+static x86_reg register_to_full_size_register (x86_reg reg);
+static void emit_scratch_register_restore (GumX86Writer * cw, x86_reg reg);
+static void emit_buffer_write_impl (GumX86Writer * cw);
+
+#endif
+
 static void emit_event (guint32 type, const guint8 * payload, gsize payload_size);
 static void write_reg_spec (guint8 ** p, const gchar * name, guint8 reg_size);
 static void format_reg_name (gchar * name, gchar prefix, guint index);
@@ -95,13 +124,22 @@ transform (GumStalkerIterator * iterator,
            GumStalkerOutput * output,
            gpointer user_data)
 {
+#if defined (HAVE_ARM64)
   GumArm64Writer * cw = output->writer.arm64;
+#else
+  GumX86Writer * cw = output->writer.x86;
+#endif
   csh capstone = gum_stalker_iterator_get_capstone (iterator);
 
   guint num_instructions = 0;
   GumAddress block_address = 0;
+#if defined (HAVE_ARM64)
   guint log_buf_offset = 16;
   arm64_reg prev_session_reg = ARM64_REG_INVALID;
+#else
+  guint log_buf_offset = 8;
+  x86_reg prev_session_reg = X86_REG_INVALID;
+#endif
 
   GArray * writes = g_array_new (FALSE, FALSE, sizeof (ITraceBlockWrite));
 
@@ -135,6 +173,7 @@ transform (GumStalkerIterator * iterator,
     for (uint8_t i = 0; i != num_regs_written; i++)
       regs_written[i] = register_to_full_size_register (regs_written[i]);
 
+#if defined (HAVE_ARM64)
     arm64_reg session_reg = is_last_in_block
         ? SCRATCH_REG_TOP
         : pick_scratch_register (regs_read, num_regs_read, regs_written, num_regs_written);
@@ -186,6 +225,59 @@ transform (GumStalkerIterator * iterator,
 
       emit_scratch_register_restore (cw, session_reg);
     }
+#else
+    x86_reg session_reg = is_last_in_block
+        ? SCRATCH_REG_TOP
+        : pick_scratch_register (regs_read, num_regs_read, regs_written, num_regs_written);
+
+    if (session_reg != prev_session_reg)
+    {
+      if (prev_session_reg != X86_REG_INVALID)
+        gum_x86_writer_put_mov_reg_reg (cw, session_reg, prev_session_reg);
+      else
+        gum_x86_writer_put_mov_reg_address (cw, session_reg, GUM_ADDRESS (&session));
+    }
+
+    if (prev_session_reg != X86_REG_INVALID && session_reg != prev_session_reg)
+      emit_scratch_register_restore (cw, prev_session_reg);
+
+    if (is_last_in_block)
+    {
+      gum_x86_writer_put_mov_reg_offset_ptr_reg (cw, session_reg,
+          G_STRUCT_OFFSET (ITraceSession, saved_regs), X86_REG_RAX);
+
+      gum_x86_writer_put_mov_reg_address (cw, X86_REG_RAX, block_address);
+      gum_x86_writer_put_mov_reg_offset_ptr_reg (cw, session_reg,
+          G_STRUCT_OFFSET (ITraceSession, log_buf), X86_REG_RAX);
+
+      gum_x86_writer_put_mov_reg_address (cw, X86_REG_RAX, (GumAddress) log_buf_offset);
+      gum_x86_writer_put_mov_reg_offset_ptr_reg (cw, session_reg,
+          G_STRUCT_OFFSET (ITraceSession, pending_size), X86_REG_RAX);
+
+      if (session.write_impl == 0)
+      {
+        gconstpointer after_write_impl = cw->code + 1;
+
+        gum_x86_writer_put_jmp_near_label (cw, after_write_impl);
+
+        session.write_impl = cw->pc;
+        emit_buffer_write_impl (cw);
+
+        gum_x86_writer_put_label (cw, after_write_impl);
+      }
+
+      gum_x86_writer_put_lea_reg_reg_offset (cw, X86_REG_RSP,
+          X86_REG_RSP, -RED_ZONE_SIZE);
+      gum_x86_writer_put_call_address (cw, session.write_impl);
+      gum_x86_writer_put_lea_reg_reg_offset (cw, X86_REG_RSP,
+          X86_REG_RSP, RED_ZONE_SIZE);
+
+      gum_x86_writer_put_mov_reg_reg_offset_ptr (cw, X86_REG_RAX, session_reg,
+          G_STRUCT_OFFSET (ITraceSession, saved_regs));
+
+      emit_scratch_register_restore (cw, session_reg);
+    }
+#endif
 
     gum_stalker_iterator_keep (iterator);
 
@@ -194,6 +286,7 @@ transform (GumStalkerIterator * iterator,
 
     guint block_offset = (insn->address + insn->size) - block_address;
 
+#if defined (HAVE_ARM64)
     for (uint8_t i = 0; i != num_regs_written; i++)
     {
       arm64_reg reg = regs_written[i];
@@ -288,12 +381,66 @@ transform (GumStalkerIterator * iterator,
       if (temp_reg != ARM64_REG_INVALID)
         gum_arm64_writer_put_ldr_reg_reg_offset (cw, temp_reg, session_reg, G_STRUCT_OFFSET (ITraceSession, saved_regs));
     }
+#else
+    for (uint8_t i = 0; i != num_regs_written; i++)
+    {
+      x86_reg reg = regs_written[i];
+      if (reg >= SCRATCH_REG_BOTTOM && reg <= SCRATCH_REG_TOP)
+      {
+        gum_x86_writer_put_mov_reg_offset_ptr_reg (cw, session_reg,
+            G_STRUCT_OFFSET (ITraceSession, scratch_regs) + SCRATCH_REG_OFFSET (reg), reg);
+      }
+    }
+
+    for (uint8_t i = 0; i != num_regs_written; i++)
+    {
+      x86_reg reg = regs_written[i];
+
+      if (reg == X86_REG_EFLAGS || reg == X86_REG_RIP)
+        continue;
+
+      guint cpu_reg_index;
+
+      switch (reg)
+      {
+        case X86_REG_R15: cpu_reg_index = 1; break;
+        case X86_REG_R14: cpu_reg_index = 2; break;
+        case X86_REG_R13: cpu_reg_index = 3; break;
+        case X86_REG_R12: cpu_reg_index = 4; break;
+        case X86_REG_R11: cpu_reg_index = 5; break;
+        case X86_REG_R10: cpu_reg_index = 6; break;
+        case X86_REG_R9:  cpu_reg_index = 7; break;
+        case X86_REG_R8:  cpu_reg_index = 8; break;
+        case X86_REG_RDI: cpu_reg_index = 9; break;
+        case X86_REG_RSI: cpu_reg_index = 10; break;
+        case X86_REG_RBP: cpu_reg_index = 11; break;
+        case X86_REG_RSP: cpu_reg_index = 12; break;
+        case X86_REG_RBX: cpu_reg_index = 13; break;
+        case X86_REG_RDX: cpu_reg_index = 14; break;
+        case X86_REG_RCX: cpu_reg_index = 15; break;
+        case X86_REG_RAX: cpu_reg_index = 16; break;
+        default: continue;
+      }
+
+      gsize offset = G_STRUCT_OFFSET (ITraceSession, log_buf) + log_buf_offset;
+      gum_x86_writer_put_mov_reg_offset_ptr_reg (cw, session_reg, offset, reg);
+
+      ITraceBlockWrite write = { block_offset, cpu_reg_index };
+      g_array_append_val (writes, write);
+
+      log_buf_offset += 8;
+    }
+#endif
 
     prev_session_reg = session_reg;
   }
 
   guint32 block_size = (insn->address + insn->size) - block_address;
+#if defined (HAVE_ARM64)
   guint32 compiled_code_size = gum_arm64_writer_offset (cw);
+#else
+  guint32 compiled_code_size = gum_x86_writer_offset (cw);
+#endif
   GumAddress compiled_address = cw->pc - compiled_code_size;
 
   GumModule * m = gum_module_map_find (session.modules, block_address);
@@ -387,6 +534,7 @@ on_first_block_hit (GumCpuContext * cpu_context,
     return;
   session.state = ITRACE_STATE_STARTED;
 
+#if defined (HAVE_ARM64)
   memcpy (session.scratch_regs,
       cpu_context->x + (SCRATCH_REG_BOTTOM - ARM64_REG_X0),
       sizeof (session.scratch_regs));
@@ -399,6 +547,14 @@ on_first_block_hit (GumCpuContext * cpu_context,
       1 +                              /* fp */
       1 +                              /* lr */
       G_N_ELEMENTS (cpu_context->v);   /* v0-v31 */
+#else
+  session.scratch_regs[SCRATCH_REG_INDEX (X86_REG_R12)] = cpu_context->r12;
+  session.scratch_regs[SCRATCH_REG_INDEX (X86_REG_R13)] = cpu_context->r13;
+  session.scratch_regs[SCRATCH_REG_INDEX (X86_REG_R14)] = cpu_context->r14;
+  session.scratch_regs[SCRATCH_REG_INDEX (X86_REG_R15)] = cpu_context->r15;
+
+  guint32 num_regs = 17;
+#endif
   guint32 context_size = sizeof (GumCpuContext);
 
   gsize payload_size = 4 + 4 + (num_regs * 8) + context_size;
@@ -415,6 +571,7 @@ on_first_block_hit (GumCpuContext * cpu_context,
   memcpy (p, &num_regs, 4); p += 4;
   memcpy (p, &context_size, 4); p += 4;
 
+#if defined (HAVE_ARM64)
   write_reg_spec (&p, "pc", sizeof (cpu_context->pc));
   write_reg_spec (&p, "sp", sizeof (cpu_context->sp));
   write_reg_spec (&p, "nzcv", sizeof (cpu_context->nzcv));
@@ -435,6 +592,25 @@ on_first_block_hit (GumCpuContext * cpu_context,
     format_reg_name (name, 'v', i);
     write_reg_spec (&p, name, sizeof (cpu_context->v[0]));
   }
+#else
+  write_reg_spec (&p, "rip", 8);
+  write_reg_spec (&p, "r15", 8);
+  write_reg_spec (&p, "r14", 8);
+  write_reg_spec (&p, "r13", 8);
+  write_reg_spec (&p, "r12", 8);
+  write_reg_spec (&p, "r11", 8);
+  write_reg_spec (&p, "r10", 8);
+  write_reg_spec (&p, "r9", 8);
+  write_reg_spec (&p, "r8", 8);
+  write_reg_spec (&p, "rdi", 8);
+  write_reg_spec (&p, "rsi", 8);
+  write_reg_spec (&p, "rbp", 8);
+  write_reg_spec (&p, "rsp", 8);
+  write_reg_spec (&p, "rbx", 8);
+  write_reg_spec (&p, "rdx", 8);
+  write_reg_spec (&p, "rcx", 8);
+  write_reg_spec (&p, "rax", 8);
+#endif
 
   memcpy (p, cpu_context, context_size);
   p += context_size;
@@ -468,6 +644,8 @@ panic (const char * format,
 
   g_free (message);
 }
+
+#if defined (HAVE_ARM64)
 
 static arm64_reg
 pick_scratch_register (cs_regs regs_read,
@@ -662,6 +840,224 @@ emit_buffer_write_impl (GumArm64Writer * cw)
 
   gum_arm64_writer_put_bytes (cw, (const guint8 *) write_impl, sizeof (write_impl));
 }
+
+#elif defined (HAVE_I386)
+
+static x86_reg
+pick_scratch_register (cs_regs regs_read,
+                       uint8_t num_regs_read,
+                       cs_regs regs_written,
+                       uint8_t num_regs_written)
+{
+  x86_reg candidate;
+
+  for (candidate = SCRATCH_REG_TOP; candidate != SCRATCH_REG_BOTTOM - 1; candidate--)
+  {
+    gboolean available = TRUE;
+
+    for (uint8_t i = 0; i != num_regs_read; i++)
+    {
+      if (regs_read[i] == candidate)
+      {
+        available = FALSE;
+        break;
+      }
+    }
+    if (!available)
+      continue;
+
+    for (uint8_t i = 0; i != num_regs_written; i++)
+    {
+      if (regs_written[i] == candidate)
+      {
+        available = FALSE;
+        break;
+      }
+    }
+    if (!available)
+      continue;
+
+    break;
+  }
+
+  return candidate;
+}
+
+static x86_reg
+register_to_full_size_register (x86_reg reg)
+{
+  switch (reg)
+  {
+    case X86_REG_RAX: case X86_REG_RBX: case X86_REG_RCX: case X86_REG_RDX:
+    case X86_REG_RSI: case X86_REG_RDI: case X86_REG_RSP: case X86_REG_RBP:
+    case X86_REG_R8:  case X86_REG_R9:  case X86_REG_R10: case X86_REG_R11:
+    case X86_REG_R12: case X86_REG_R13: case X86_REG_R14: case X86_REG_R15:
+    case X86_REG_RIP: case X86_REG_EFLAGS:
+      return reg;
+
+    case X86_REG_EAX: return X86_REG_RAX;
+    case X86_REG_EBX: return X86_REG_RBX;
+    case X86_REG_ECX: return X86_REG_RCX;
+    case X86_REG_EDX: return X86_REG_RDX;
+    case X86_REG_ESI: return X86_REG_RSI;
+    case X86_REG_EDI: return X86_REG_RDI;
+    case X86_REG_ESP: return X86_REG_RSP;
+    case X86_REG_EBP: return X86_REG_RBP;
+    case X86_REG_EIP: return X86_REG_RIP;
+
+    case X86_REG_AX: case X86_REG_AH: case X86_REG_AL: return X86_REG_RAX;
+    case X86_REG_BX: case X86_REG_BH: case X86_REG_BL: return X86_REG_RBX;
+    case X86_REG_CX: case X86_REG_CH: case X86_REG_CL: return X86_REG_RCX;
+    case X86_REG_DX: case X86_REG_DH: case X86_REG_DL: return X86_REG_RDX;
+    case X86_REG_SI: case X86_REG_SIL: return X86_REG_RSI;
+    case X86_REG_DI: case X86_REG_DIL: return X86_REG_RDI;
+    case X86_REG_SP: case X86_REG_SPL: return X86_REG_RSP;
+    case X86_REG_BP: case X86_REG_BPL: return X86_REG_RBP;
+    case X86_REG_IP: return X86_REG_RIP;
+
+    case X86_REG_R8D:  case X86_REG_R8W:  case X86_REG_R8B:  return X86_REG_R8;
+    case X86_REG_R9D:  case X86_REG_R9W:  case X86_REG_R9B:  return X86_REG_R9;
+    case X86_REG_R10D: case X86_REG_R10W: case X86_REG_R10B: return X86_REG_R10;
+    case X86_REG_R11D: case X86_REG_R11W: case X86_REG_R11B: return X86_REG_R11;
+    case X86_REG_R12D: case X86_REG_R12W: case X86_REG_R12B: return X86_REG_R12;
+    case X86_REG_R13D: case X86_REG_R13W: case X86_REG_R13B: return X86_REG_R13;
+    case X86_REG_R14D: case X86_REG_R14W: case X86_REG_R14B: return X86_REG_R14;
+    case X86_REG_R15D: case X86_REG_R15W: case X86_REG_R15B: return X86_REG_R15;
+
+    default:
+      return reg;
+  }
+}
+
+static void
+emit_scratch_register_restore (GumX86Writer * cw,
+                               x86_reg reg)
+{
+  gum_x86_writer_put_mov_reg_reg_offset_ptr (cw, reg,
+      reg, G_STRUCT_OFFSET (ITraceSession, scratch_regs) + SCRATCH_REG_OFFSET (reg));
+}
+
+static void
+emit_buffer_write_impl (GumX86Writer * cw)
+{
+  static const guint8 write_impl[] = {
+    0x49, 0x89, 0x47, 0x28,             /* mov [r15+0x28], rax              */
+    0x49, 0x89, 0x4f, 0x30,             /* mov [r15+0x30], rcx              */
+    0x49, 0x89, 0x57, 0x38,             /* mov [r15+0x38], rdx              */
+    0x49, 0x89, 0x77, 0x40,             /* mov [r15+0x40], rsi              */
+    0x49, 0x89, 0x7f, 0x48,             /* mov [r15+0x48], rdi              */
+    0x4d, 0x89, 0x47, 0x50,             /* mov [r15+0x50], r8               */
+    0x4d, 0x89, 0x4f, 0x58,             /* mov [r15+0x58], r9               */
+    0x4d, 0x89, 0x57, 0x60,             /* mov [r15+0x60], r10              */
+    0x4d, 0x89, 0x5f, 0x68,             /* mov [r15+0x68], r11              */
+
+    0x9f,                               /* lahf                             */
+    0x0f, 0x90, 0xc0,                   /* seto al                          */
+    0x49, 0x89, 0x47, 0x70,             /* mov [r15+0x70], rax              */
+
+    0x49, 0x8b, 0x7f, 0x08,             /* mov rdi, [r15+0x08]              */
+    0x49, 0x8d, 0xb7, 0x48, 0x02, 0x00, /* lea rsi, [r15+0x248]            */
+    0x00,
+    0x49, 0x8b, 0x4f, 0x10,             /* mov rcx, [r15+0x10]              */
+
+    0x4c, 0x8b, 0x57, 0x08,             /* mov r10, [rdi+0x08]              */
+    0x4c, 0x8b, 0x47, 0x18,             /* mov r8, [rdi+0x18]               */
+    0x48, 0x8b, 0x07,                   /* mov rax, [rdi]                   */
+    0x49, 0x39, 0xc2,                   /* cmp r10, rax                     */
+    0x74, 0x0e,                         /* je empty                         */
+    0x4c, 0x39, 0xd0,                   /* cmp rax, r10                     */
+    0x72, 0x12,                         /* jb head_before_tail              */
+    0x48, 0x83, 0xe8, 0x01,             /* sub rax, 1                       */
+    0x4c, 0x29, 0xd0,                   /* sub rax, r10                     */
+    0xeb, 0x15,                         /* jmp check_headroom               */
+    /* empty:                                                               */
+    0x4c, 0x89, 0xc0,                   /* mov rax, r8                      */
+    0x48, 0x83, 0xe8, 0x01,             /* sub rax, 1                       */
+    0xeb, 0x0c,                         /* jmp check_headroom               */
+    /* head_before_tail:                                                    */
+    0x48, 0x8b, 0x57, 0x18,             /* mov rdx, [rdi+0x18]              */
+    0x48, 0x8d, 0x44, 0x10, 0xff,       /* lea rax, [rax+rdx-1]            */
+    0x4c, 0x29, 0xd0,                   /* sub rax, r10                     */
+    /* check_headroom:                                                      */
+    0x48, 0x39, 0xc8,                   /* cmp rax, rcx                     */
+    0x0f, 0x82, 0x85, 0x00, 0x00, 0x00, /* jb lost                         */
+
+    0x49, 0x8d, 0x04, 0x0a,             /* lea rax, [r10+rcx]              */
+    0x31, 0xd2,                         /* xor edx, edx                     */
+    0x49, 0xf7, 0xf0,                   /* div r8                           */
+    0x49, 0x39, 0xd2,                   /* cmp r10, rdx                     */
+    0x73, 0x23,                         /* jae copy_with_wrap               */
+
+    0x49, 0x89, 0xcb,                   /* mov r11, rcx                     */
+    0x49, 0xc1, 0xeb, 0x03,             /* shr r11, 3                       */
+    0x74, 0x68,                         /* je store_tail                    */
+    0x31, 0xc0,                         /* xor eax, eax                     */
+    0x4e, 0x8d, 0x04, 0x17,             /* lea r8, [rdi+r10]               */
+    /* straight_loop:                                                       */
+    0x4c, 0x8b, 0x0c, 0xc6,             /* mov r9, [rsi+rax*8]             */
+    0x4d, 0x89, 0x4c, 0xc0, 0x20,       /* mov [r8+rax*8+0x20], r9         */
+    0x48, 0x83, 0xc0, 0x01,             /* add rax, 1                       */
+    0x4c, 0x39, 0xd8,                   /* cmp rax, r11                     */
+    0x75, 0xee,                         /* jne straight_loop                */
+    0xeb, 0x4e,                         /* jmp store_tail                   */
+
+    /* copy_with_wrap:                                                      */
+    0x4c, 0x8b, 0x5f, 0x18,             /* mov r11, [rdi+0x18]             */
+    0x4d, 0x29, 0xd3,                   /* sub r11, r10                     */
+    0x4c, 0x89, 0xd8,                   /* mov rax, r11                     */
+    0x48, 0xc1, 0xe8, 0x03,             /* shr rax, 3                       */
+    0x74, 0x19,                         /* je wrap_second_part              */
+    0x45, 0x31, 0xc9,                   /* xor r9d, r9d                     */
+    0x4e, 0x8d, 0x04, 0x17,             /* lea r8, [rdi+r10]               */
+    /* wrap_first_loop:                                                     */
+    0x4a, 0x8b, 0x0c, 0xce,             /* mov rcx, [rsi+r9*8]             */
+    0x4b, 0x89, 0x4c, 0xc8, 0x20,       /* mov [r8+r9*8+0x20], rcx         */
+    0x49, 0x83, 0xc1, 0x01,             /* add r9, 1                        */
+    0x49, 0x39, 0xc1,                   /* cmp r9, rax                      */
+    0x75, 0xee,                         /* jne wrap_first_loop              */
+
+    /* wrap_second_part:                                                    */
+    0x49, 0x8b, 0x4f, 0x10,             /* mov rcx, [r15+0x10]             */
+    0x4c, 0x29, 0xd9,                   /* sub rcx, r11                     */
+    0x48, 0xc1, 0xe9, 0x03,             /* shr rcx, 3                       */
+    0x74, 0x18,                         /* je store_tail                    */
+    0x31, 0xc0,                         /* xor eax, eax                     */
+    0x4e, 0x8d, 0x04, 0x1e,             /* lea r8, [rsi+r11]               */
+    /* wrap_second_loop:                                                    */
+    0x4d, 0x8b, 0x0c, 0xc0,             /* mov r9, [r8+rax*8]              */
+    0x4c, 0x89, 0x4c, 0xc7, 0x20,       /* mov [rdi+rax*8+0x20], r9        */
+    0x48, 0x83, 0xc0, 0x01,             /* add rax, 1                       */
+    0x48, 0x39, 0xc8,                   /* cmp rax, rcx                     */
+    0x75, 0xee,                         /* jne wrap_second_loop             */
+
+    /* store_tail:                                                          */
+    0x48, 0x89, 0x57, 0x08,             /* mov [rdi+0x08], rdx              */
+    0xeb, 0x06,                         /* jmp beach                        */
+    /* lost:                                                                */
+    0xf0, 0x48, 0x83, 0x47, 0x10, 0x01, /* lock add qword [rdi+0x10], 1   */
+
+    /* beach:                                                               */
+    0x49, 0x8b, 0x47, 0x70,             /* mov rax, [r15+0x70]              */
+    0x04, 0x7f,                         /* add al, 0x7f                     */
+    0x9e,                               /* sahf                             */
+
+    0x4d, 0x8b, 0x5f, 0x68,             /* mov r11, [r15+0x68]              */
+    0x4d, 0x8b, 0x57, 0x60,             /* mov r10, [r15+0x60]              */
+    0x4d, 0x8b, 0x4f, 0x58,             /* mov r9, [r15+0x58]               */
+    0x4d, 0x8b, 0x47, 0x50,             /* mov r8, [r15+0x50]               */
+    0x49, 0x8b, 0x7f, 0x48,             /* mov rdi, [r15+0x48]              */
+    0x49, 0x8b, 0x77, 0x40,             /* mov rsi, [r15+0x40]              */
+    0x49, 0x8b, 0x57, 0x38,             /* mov rdx, [r15+0x38]              */
+    0x49, 0x8b, 0x4f, 0x30,             /* mov rcx, [r15+0x30]              */
+    0x49, 0x8b, 0x47, 0x28,             /* mov rax, [r15+0x28]              */
+
+    0xc3,                               /* ret                              */
+  };
+
+  gum_x86_writer_put_bytes (cw, write_impl, sizeof (write_impl));
+}
+
+#endif
 
 static void
 emit_event (guint32 type,
