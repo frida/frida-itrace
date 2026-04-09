@@ -3,7 +3,7 @@ ios_sdkroot := $(shell xcrun --sdk iphoneos --show-sdk-path)
 cflags := -Wall -Werror -pipe -Oz -g
 ldflags := -Wl,-dead_strip
 
-all: itracebuffer.dylib itracebuffer_write.dylib itracebuffer_read.dylib
+all: itracebuffer.dylib itracebuffer_write_arm64.dylib itracebuffer_read_arm64.dylib
 
 itracebuffer.dylib: itracebuffer.c
 	$(ios_cc) \
